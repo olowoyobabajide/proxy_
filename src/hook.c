@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include "proxy_chain.h"
 
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 
@@ -14,23 +15,27 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen){
         exit(EXIT_FAILURE);
     }
 
-    char ip[INET_ADDRSTRLEN];
-    char ip6[INET6_ADDRSTRLEN];
+    char ip[INET6_ADDRSTRLEN];
+    uint16_t port = 0;
+
     if(addr->sa_family == AF_INET){
         struct sockaddr_in *addr_in = (struct sockaddr_in *)addr;
-        int port = ntohs(addr_in->sin_port);
-        inet_ntop(AF_INET, &addr_in->sin_addr, ip, INET_ADDRSTRLEN);
-        fprintf(stderr, "Connecting to %s:%d\n", ip, port);
+        inet_ntop(AF_INET, &(addr_in->sin_addr), ip, INET_ADDRSTRLEN);
+        port = ntohs(addr_in->sin_port);
     }
     else if(addr->sa_family == AF_INET6){
         struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *)addr;
-        int port6 = ntohs(addr_in6->sin6_port);
-        inet_ntop(AF_INET6, &addr_in6->sin6_addr, ip6, INET6_ADDRSTRLEN);
-        fprintf(stderr, "Connecting to %s:%d\n", ip6, port6);
+        inet_ntop(AF_INET6, &(addr_in6->sin6_addr), ip, INET6_ADDRSTRLEN);
+        port = ntohs(addr_in6->sin6_port);
     }
     else{
-        fprintf(stderr, "Unknown address family\n");
+        return real_connect(sockfd, addr, addrlen);
     }
+
+    if(proxy_chain_connect(sockfd, ip, port, real_connect) == 0){
+        return 0;
+    }
+
     return real_connect(sockfd, addr, addrlen);
 }
 

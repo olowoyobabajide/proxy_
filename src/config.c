@@ -51,7 +51,7 @@ ProxyConfig config_parse(FILE* config_file){
 
 // Serialize cfg into buf of size bufsz.
 // Returns total bytes written (excl. NUL), or -1 on overflow. 
-char* config_serialize(const ProxyConfig *cfg, char *buf, int bufsz){
+int config_serialize(const ProxyConfig *cfg, char *buf, int bufsz){
     const char *mode_str;
     switch(cfg->mode){
         case CHAIN_STRICT:  mode_str = "strict_chain";  break;
@@ -64,19 +64,16 @@ char* config_serialize(const ProxyConfig *cfg, char *buf, int bufsz){
     int rem = bufsz;
     int n;
 
-    /* Chain mode */
     n = snprintf(buf + off, rem, "%s\n", mode_str);
     if(n < 0 || n >= rem){ return -1; }
     off += n; rem -= n;
 
-    /* chain_len only relevant for random mode */
     if(cfg->mode == CHAIN_RANDOM){
         n = snprintf(buf + off, rem, "chain_len = %d\n", cfg->random_chain_len);
         if(n < 0 || n >= rem){ return -1; }
         off += n; rem -= n;
     }
 
-    /* Proxy entries */
     const char *type_str;
     for(int i = 0; i < cfg->count; i++){
         const ProxyEntry *e = &cfg->entries[i];
@@ -98,5 +95,5 @@ char* config_serialize(const ProxyConfig *cfg, char *buf, int bufsz){
         off += n; rem -= n;
     }
 
-    return buf;
+    return off;
 }

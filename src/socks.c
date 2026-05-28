@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <netdb.h>
 
 static int sock5_phase1(int sockfd);
 static int sock5_phase2(int sockfd, const char *user, const char *pass);
@@ -25,7 +26,7 @@ static int sock5_phase1(int sockfd){
         perror("read");
         return -1;
     }
-    if(buffer[0] != 0x05){fprintf(stderr, "Invalid version\n"), return -1;}
+    if(buffer[0] != 0x05){fprintf(stderr, "Invalid version\n"); return -1;}
     else if(buffer[1] == 0xFF){fprintf(stderr, "server rejected all methods\n"); return -1;} 
     else if(buffer[1] == 0x02){ return 0x02;} 
     else{fprintf(stderr, "Unsupported auth method\n"); return -1;}  
@@ -125,4 +126,41 @@ int socks5_tunnel(int sockfd, const char *host, uint16_t port, const char *user,
     return 0;
 
 }
+
+int socks4_tunnel(int sockfd, const char *host, uint16_t port){
+    unsigned char buffer[9];
+    
+    buffer[0] = 0x04;
+    buffer[1] = 0x01;
+    uint16_t port_net = htons(port);
+    buffer[2] = (port_net >> 8) & 0xFF;
+    buffer[3] = port_net & 0xFF;
+    // need to work on this line 138 - 146
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    int err = getaddrinfo(host, NULL, &hints, &res);
+    if(err != 0){
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(err));
+        return -1;
+    }
+    struct sockaddr_in *addr_in = (struct sockaddr_in *)res->ai_addr;
+    memcpy(buffer + 4, &addr_in->sin_addr, 4);
+    buffer[8] = 0x00;
+    
+    freeaddrinfo(res);
+    if(write(sockfd, buffer, 9) != 9){
+        perror("write");
+        return -1;
+    }
+
+    if(read(sockfd, buffer, 8) != 8){
+        perror("read");
+        return -1;
+    }
+    if(buffer[0] != 0x00){fprintf(stderr, "Invalid version\n"); return -1;}
+    else if(buffer[1] == 0x5A){return 0x00;} 
+    else{fprintf(stderr, "Connection rejected: %d\n", buffer[1]); return -1;}    
+}
+
         

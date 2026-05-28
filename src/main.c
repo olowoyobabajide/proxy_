@@ -1,7 +1,7 @@
 #include "config.h"
 #include "main.h"
 
-#define MAX_ENV_LENGTH 1024
+#define MAX_ENV_LENGTH 4096
 
 int main(int argc, char **argv){
     if(argc == 1){fprintf(stderr, "No arguments. Try proxy_h(working on it)"); return 1;}
@@ -14,9 +14,12 @@ int main(int argc, char **argv){
 
     char out[MAX_ENV_LENGTH];
     int written = config_serialize(&cfg, out, MAX_ENV_LENGTH);
-
     if(written < 0){
         fprintf(stderr, "Serialization failed: buffer too small\n");
+        return -1;
+    }
+    if(setenv("PROXYTOOL_CHAIN", out, 1) < 0){
+        fprintf(stderr, "setenv failed\n");
         return -1;
     }
 

@@ -3,10 +3,23 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 #include <sys/socket.h>
+#include <strings.h>
 
 int http_response_tunnel(int sockfd);
 
+static int wait_readable(int fd, int timeout_sec){
+    fd_set set;
+    struct timeval tv;
+    FD_ZERO(&set);
+    FD_SET(fd, &set);
+    tv.tv_sec = timeout_sec;
+    tv.tv_usec = 0;
+    int r = select(fd + 1, &set, NULL, NULL, &tv);
+    if(r <= 0) return -1;
+    return 0;
+}       
 int http_connect_tunnel(int sockfd, const char *host, uint16_t port, const char *user, const char *pass){
     bool auth = false;
     char buffer[1024];
@@ -52,6 +65,10 @@ int http_response_tunnel(int sockfd){
 
     int read_len;
     while(1){
+        if(wait_readable(sockfd, 10) < 0){
+            fprintf(stderr, "Error: read timeout\n");
+            return -1;
+        }
         read_len = read(sockfd, &a, 1);
         if(read_len == 0){fprintf(stderr, "Error: Connection closed\n"); return -1;}
         if(read_len < 0){

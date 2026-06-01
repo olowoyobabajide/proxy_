@@ -4,15 +4,18 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include "proxy_chain.h"
+#include <errno.h>
 
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen){
     static int(*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
-    real_connect = dlsym(RTLD_NEXT, "connect");
     if(real_connect == NULL){
-        fprintf(stderr, "Error: %s\n", dlerror());
-        exit(EXIT_FAILURE);
+        real_connect = dlsym(RTLD_NEXT, "connect");
+        if(real_connect == NULL){
+            fprintf(stderr, "Error: %s\n", dlerror());
+            exit(EXIT_FAILURE);
+        }
     }
 
     char ip[INET6_ADDRSTRLEN];
@@ -32,10 +35,10 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen){
         return real_connect(sockfd, addr, addrlen);
     }
 
-    if(proxy_chain_connect(sockfd, ip, port, real_connect) == 0){
-        return 0;
+    if(proxy_chain_connect(sockfd, ip, port, addr, addrlen) < 0){
+        errno = ECONNREFUSED;
+        return -1;
     }
-
-    return real_connect(sockfd, addr, addrlen);
+    return 0;
 }
 

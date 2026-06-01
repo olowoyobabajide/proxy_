@@ -3,6 +3,7 @@
 ProxyConfig config_parse(FILE* config_file){
     ProxyConfig config;
     char buf[1024];
+    config.mode = CHAIN_STRICT;
     config.count = 0;
 
     while(fgets(buf, sizeof(buf), config_file)){
@@ -28,8 +29,12 @@ ProxyConfig config_parse(FILE* config_file){
 
             if(strcmp(token, "socks4") == 0)       { e->type = PROXY_SOCKS4; }
             else if(strcmp(token, "socks5") == 0)  { e->type = PROXY_SOCKS5; }
-            else if(strcmp(token, "https") == 0)    { e->type = PROXY_HTTP_CONNECT; }
-
+            else if(strcmp(token, "http") == 0)    { e->type = PROXY_HTTP_CONNECT; }
+            else {
+                fprintf(stderr, "Warning: Unknown proxy type '%s'\n", token);
+                config.count--;  /* undo the increment that happens below */
+                continue;
+            }
             char *host = strtok(NULL, " \n");
             char *port = strtok(NULL, " \n");
             char *user = strtok(NULL, " \n");

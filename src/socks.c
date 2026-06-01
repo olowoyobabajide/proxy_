@@ -29,6 +29,7 @@ static int sock5_phase1(int sockfd){
     if(buffer[0] != 0x05){fprintf(stderr, "Invalid version\n"); return -1;}
     else if(buffer[1] == 0xFF){fprintf(stderr, "server rejected all methods\n"); return -1;} 
     else if(buffer[1] == 0x02){ return 0x02;} 
+    else if(buffer[1] == 0x00){ return 0x00; }
     else{fprintf(stderr, "Unsupported auth method\n"); return -1;}  
 
 }
@@ -55,7 +56,7 @@ static int sock5_phase2(int sockfd, const char *user, const char *pass){
     }
     if(buffer[0] != 0x01){fprintf(stderr, "Invalid version\n"); return -1;}
     else if(buffer[1] == 0x00){return 0x00;} 
-    else{fprintf(stderr, "Unsupported auth method\n"); return -1;}  
+    else{fprintf(stderr, "Authentication failed: %d\n", buffer[1]); return -1;}  
 }
 
 static int sock5_phase3(int sockfd, const char *host, uint16_t port){
@@ -82,8 +83,8 @@ static int sock5_phase3(int sockfd, const char *host, uint16_t port){
         return -1;
     }
     if(buffer[0] != 0x05){fprintf(stderr, "Invalid version\n"); return -1;}
-    else if(buffer[0] == 0x00){return 0x00;} 
-   
+    if(buffer[1] != 0x00){fprintf(stderr, "Connection failed: %d\n", buffer[1]); return -1;}
+
     unsigned char discard[18];
     if(buffer[3] == 0x01){
         if(read(sockfd, discard, 6) != 6){perror("read"); return -1;}
@@ -99,9 +100,9 @@ static int sock5_phase3(int sockfd, const char *host, uint16_t port){
         }
         if(read(sockfd, discard, discard[0] + 2) != discard[0] + 2){perror("read"); return -1;}
     }
-    else{fprintf(stderr, "Unknown address type: %d\n", buffer[0]); return -1;}  
+    else{fprintf(stderr, "Unknown address type: %d\n", buffer[3]); return -1;}  
 
-     
+    return 0;
     
 }
 
@@ -135,7 +136,7 @@ int socks4_tunnel(int sockfd, const char *host, uint16_t port){
     uint16_t port_net = htons(port);
     buffer[2] = (port_net >> 8) & 0xFF;
     buffer[3] = port_net & 0xFF;
-    // need to work on this line 138 - 146
+
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;

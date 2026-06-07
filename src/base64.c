@@ -12,13 +12,11 @@ char *base64_encode(const char *user, const char *pass) {
     size_t user_len = strlen(user);
     size_t pass_len = strlen(pass);
     
-    // Combine into "user:pass"
     size_t input_len = user_len + pass_len + 1; 
     char *input = malloc(input_len + 1);
     if (!input) return NULL;
     snprintf(input, input_len + 1, "%s:%s", user, pass);
-
-    // Base64 output length is roughly 4/3 of input
+    
     size_t output_len = 4 * ((input_len + 2) / 3);
     char *output = malloc(output_len + 1);
     if (!output) {

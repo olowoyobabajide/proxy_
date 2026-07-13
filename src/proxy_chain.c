@@ -7,6 +7,8 @@
 #include <netdb.h>
 #include <sys/select.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <fcntl.h>
 
 ProxyConfig proxy_chain_deserialize(const char *str);
 int proxy_chain_connect(int sockfd, const char *host, uint16_t port,
@@ -39,84 +41,166 @@ int proxy_chain_connect(int sockfd, const char *host, uint16_t port,
         return -1;
     }
     
+    int flags = fcntl(sockfd, F_GETFL, 0);
+
+    if (cfg.mode == CHAIN_RANDOM) {
+        int len = cfg.random_chain_len;
+        if (len <= 0 || len > cfg.count) len = cfg.count;
+        ProxyConfig r_cfg;
+        r_cfg.mode = CHAIN_RANDOM;
+        r_cfg.count = len;
+        
+        int indices[64];
+        for(int i = 0; i < cfg.count; i++) indices[i] = i;
+        
+        static int seeded = 0;
+        if(!seeded) {
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            srand((unsigned int)(tv.tv_sec ^ tv.tv_usec ^ getpid()));
+            seeded = 1;
+        }
+        
+        for(int i = cfg.count - 1; i > 0; i--) {
+            int j = rand() % (i + 1);
+            int t = indices[i]; indices[i] = indices[j]; indices[j] = t;
+        }
+        for(int i = 0; i < len; i++) {
+            r_cfg.entries[i] = cfg.entries[indices[i]];
+        }
+        cfg = r_cfg;
+    }
+
+    int dead[64] = {0};
+    int max_retries = (cfg.mode == CHAIN_STRICT) ? 1 : 15;
+    int retries = 0;
+
+again:
+    if (retries++ > max_retries) {
+        fprintf(stderr, "Error: Proxy chain failed after retries\n");
+        return -1;
+    }
+    
+    ProxyEntry *active[64];
+    int active_indices[64];
+    int active_count = 0;
+    
+    for(int i = 0; i < cfg.count; i++) {
+        if(!dead[i]) {
+            active[active_count] = &cfg.entries[i];
+            active_indices[active_count] = i;
+            active_count++;
+        }
+    }
+    
+    if (active_count == 0) {
+        fprintf(stderr, "Error: No alive proxies left\n");
+        return -1;
+    }
+
+    int ns = socket(AF_INET, SOCK_STREAM, 0);
+    if (ns < 0) return -1;
+    fcntl(ns, F_SETFL, O_NONBLOCK);
+    
     struct sockaddr_in proxy_addr;
     memset(&proxy_addr, 0, sizeof(proxy_addr));
     proxy_addr.sin_family = AF_INET;
-    proxy_addr.sin_port = htons(cfg.entries[0].port);
+    proxy_addr.sin_port = htons(active[0]->port);
 
-    if(inet_pton(AF_INET, cfg.entries[0].host, &proxy_addr.sin_addr) != 1){
+    if (inet_pton(AF_INET, active[0]->host, &proxy_addr.sin_addr) != 1) {
         struct addrinfo hints, *res;
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
         hints.ai_flags = AI_NUMERICSERV;
-        int err = getaddrinfo(cfg.entries[0].host, NULL, &hints, &res);
-        if(err != 0){
+        int err = getaddrinfo(active[0]->host, NULL, &hints, &res);
+        if (err != 0) {
             fprintf(stderr, "Error: %s\n", gai_strerror(err));
+            close(ns);
+            dead[active_indices[0]] = 1;
+            if(cfg.mode != CHAIN_STRICT) goto again;
             return -1;
         }
         memcpy(&proxy_addr, res->ai_addr, sizeof(proxy_addr));
-        proxy_addr.sin_port = htons(cfg.entries[0].port);
+        proxy_addr.sin_port = htons(active[0]->port);
         freeaddrinfo(res);
     }
-    int rc = real_connect(sockfd, (struct sockaddr *)&proxy_addr, sizeof(proxy_addr));
-    int connect_errno = errno;  
-    if(rc < 0 && connect_errno != EINPROGRESS){
+
+    int rc = real_connect(ns, (struct sockaddr *)&proxy_addr, sizeof(proxy_addr));
+    int connect_errno = errno;
+    if (rc < 0 && connect_errno != EINPROGRESS) {
         perror("connect");
+        close(ns);
+        dead[active_indices[0]] = 1;
+        if(cfg.mode != CHAIN_STRICT) goto again;
         return -1;
     }
-    if(rc < 0 && connect_errno == EINPROGRESS){
+    
+    if (rc < 0 && connect_errno == EINPROGRESS) {
         fd_set set;
         struct timeval timeout;
         FD_ZERO(&set);
-        FD_SET(sockfd, &set);
+        FD_SET(ns, &set);
         timeout.tv_sec = 10;
         timeout.tv_usec = 0;
-        int sel = select(sockfd + 1, NULL, &set, NULL, &timeout);
-        if(sel < 0){ perror("select"); return -1; }
-        if(sel == 0){ fprintf(stderr, "Error: Connection timeout\n"); return -1; }
+        int sel = select(ns + 1, NULL, &set, NULL, &timeout);
+        if(sel <= 0){ 
+            close(ns);
+            dead[active_indices[0]] = 1;
+            if(cfg.mode != CHAIN_STRICT) goto again;
+            return -1; 
+        }
         int sock_err;
         socklen_t errlen = sizeof(sock_err);
-        if(getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &sock_err, &errlen) < 0){
-            perror("getsockopt"); return -1;
-        }
-        if(sock_err != 0){
-            fprintf(stderr, "Error: Connection failed: %d\n", sock_err);
+        if(getsockopt(ns, SOL_SOCKET, SO_ERROR, &sock_err, &errlen) < 0 || sock_err != 0){
+            close(ns);
+            dead[active_indices[0]] = 1;
+            if(cfg.mode != CHAIN_STRICT) goto again;
             return -1;
         }
     }
 
+    fcntl(ns, F_SETFL, 0);
+
     int index = 0;
-    while(index < cfg.count){
+    while(index < active_count) {
         const char *target_host;
         uint16_t target_port;
-        if(index == (cfg.count -1)){
+        if (index == active_count - 1) {
             target_host = host;
             target_port = port;
+        } else {
+            target_host = active[index + 1]->host;
+            target_port = active[index + 1]->port;
         }
-        else{
-            target_host = cfg.entries[index + 1].host;
-            target_port = cfg.entries[index + 1].port;
+
+        int tunnel_res = -1;
+        if(active[index]->type == PROXY_SOCKS4){
+            tunnel_res = socks4_tunnel(ns, target_host, target_port);
         }
-        if(cfg.entries[index].type == PROXY_SOCKS4){
-            if(socks4_tunnel(sockfd, target_host, target_port) < 0){
-                fprintf(stderr, "Error: socks4 tunnel failed\n");
-                return -1;
+        else if(active[index]->type == PROXY_SOCKS5){
+            tunnel_res = socks5_tunnel(ns, target_host, target_port, active[index]->user, active[index]->pass);
+        }
+        else if(active[index]->type == PROXY_HTTP_CONNECT){
+            tunnel_res = http_connect_tunnel(ns, target_host, target_port, active[index]->user, active[index]->pass);
+        }
+
+        if(tunnel_res < 0) {
+            fprintf(stderr, "Error: tunnel %d failed\n", index);
+            close(ns);
+            if (index == active_count - 1) {
+                return -1; 
+            } else {
+                dead[active_indices[index + 1]] = 1;
             }
-        }
-        else if(cfg.entries[index].type == PROXY_SOCKS5){
-            if(socks5_tunnel(sockfd, target_host, target_port, cfg.entries[index].user, cfg.entries[index].pass) < 0){
-                fprintf(stderr, "Error: socks5 tunnel failed\n");
-                return -1;
-            }
-        }
-        else if(cfg.entries[index].type == PROXY_HTTP_CONNECT){
-            if(http_connect_tunnel(sockfd, target_host, target_port, cfg.entries[index].user, cfg.entries[index].pass) < 0){
-                fprintf(stderr, "Error: http connect tunnel failed\n");
-                return -1;
-            }
+            if(cfg.mode != CHAIN_STRICT) goto again;
+            return -1;
         }
         index++;
     }
+
+    dup2(ns, sockfd);
+    close(ns);
+    fcntl(sockfd, F_SETFL, flags);
     return 0;
 }
 

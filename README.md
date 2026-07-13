@@ -4,12 +4,14 @@
 
 ## Configuration
 
-The configuration file is adapted from the well-known `proxychains` project. Ensure you have a valid `proxychains4.conf` in the directory where you run the tool.
+The configuration file format and parsing logic are adapted from the popular `proxychains` tool, which is licensed under the **GPL 2.0** license. Ensure you have a valid `proxychains4.conf` in the directory where you run the tool.
 
 ## Features
 
-- **Dynamic Chain Method**: Currently, this is the default and only supported proxy chaining method.
-- *Other chaining methods (like strict or random chains) will be implemented in future updates.*
+- **Proxy Chaining Modes**: The 3 basic chaining rules are now fully implemented and supported:
+  - **Dynamic Chain**: Proxies are chained in the order they appear, skipping any unresponsive proxies.
+  - **Strict Chain**: Proxies are chained in the exact order they appear. If one proxy fails, the connection fails.
+  - **Random Chain**: Proxies are chosen randomly from the list to form the chain.
 
 ## Compilation
 
@@ -41,7 +43,7 @@ You can route any command's network traffic through the proxy chain by prefixing
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [GNU General Public License v2.0 (GPL-2.0)](LICENSE).
 
 ## Author
 
